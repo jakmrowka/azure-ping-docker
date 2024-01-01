@@ -1,0 +1,55 @@
+pool:
+  name: gads-agent-pool
+
+jobs:
+- job: RunOnAgents
+  strategy:
+    matrix:
+      raspberrypi-4b:
+        agentName: gad-agent-pi4b
+        Miejsce: Limanowa
+      mini-pc1:
+        agentName: gad-mini-pc1
+        Miejsce: Krakow
+
+  pool:
+    name: gads-agent-pool
+    demands:
+    - agent.name -equals $(agentName)
+
+  steps:
+  - task: AzureKeyVault@2
+    inputs:
+      azureSubscription: 'Azure dla studentów(232fe18a-7562-4ae5-9507-29d2bde01130)'
+      KeyVaultName: 'credentialsforproject'
+      SecretsFilter: '*'
+      RunAsPreJob: true
+
+  - script: echo Running on agent $(agentName)
+    displayName: 'Display Agent Name'
+
+  - script: |
+      echo "Uruchamiany jako użytkownik: $(whoami)"
+    displayName: 'Check Current User'
+
+  - script: |
+      sudo docker rm -f logi-ping-test || true
+    displayName: 'Remove Existing Container'
+
+  - script: |
+      sudo docker rmi logi-ping || true
+    displayName: 'Remove Existing Image'
+
+  - script: |
+      sudo docker build -t logi-ping ./app
+    displayName: 'Docker Build'
+
+  - script: |
+      echo "Running Docker container"
+      sudo docker run -d --name logi-ping-test -e Miejsce=$(Miejsce) -e ESUsername=$(es-username) -e ESPassword=$(es-password) logi-ping
+    displayName: 'Run Docker Container'
+
+  - script: |
+      sleep 15  # Daj kontenerowi trochę czasu na uruchomienie i generowanie wyjścia
+      sudo docker logs logi-ping-test
+    displayName: 'Display Docker Container Logs'
