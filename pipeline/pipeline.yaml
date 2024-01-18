@@ -1,55 +1,87 @@
-pool:
-  name: gads-agent-pool
+variables:
+- group: credentials
+- name: repo_github
+  value: 'https://github.com/jakmrowka/azure-ping-docker'
 
-jobs:
-- job: RunOnAgents
-  strategy:
-    matrix:
-      raspberrypi-4b:
-        agentName: gad-agent-pi4b
-        Miejsce: Limanowa
-      mini-pc1:
-        agentName: gad-mini-pc1
-        Miejsce: Krakow
+stages:
+- stage: BuildAndRun
+  jobs:
+  - job: RunOnAgents
+    strategy:
+      matrix:
+        raspberrypi-4b:
+          agentName: gad-agent-pi4b
+          Miejsce: Limanowa
+        mini-pc1:
+          agentName: gad-mini-pc1
+          Miejsce: Krakow
 
+    pool:
+      name: gads-agent-pool
+      demands:
+      - agent.name -equals $(agentName)
+
+    steps:
+    - task: AzureKeyVault@2
+      inputs:
+        azureSubscription: 'Azure dla studentów(232fe18a-7562-4ae5-9507-29d2bde01130)'
+        KeyVaultName: 'credentialsforproject'
+        SecretsFilter: '*'
+        RunAsPreJob: true
+
+    - script: echo Running on agent $(agentName)
+      displayName: 'Display Agent Name'
+
+    - script: |
+        echo "Uruchamiany jako użytkownik: $(whoami)"
+      displayName: 'Check Current User'
+
+    - script: |
+        sudo docker rm -f logi-ping-test || true
+      displayName: 'Remove Existing Container'
+
+    - script: |
+        sudo docker rmi logi-ping || true
+      displayName: 'Remove Existing Image'
+
+    - script: |
+        sudo docker build -t logi-ping ./app
+      displayName: 'Docker Build'
+
+    - script: |
+        echo "Running Docker container"
+        sudo docker run -d --restart=on-failure --name logi-ping-test -e Miejsce=$(Miejsce) -e ESUsername=$(es-username) -e ESPassword=$(es-password) logi-ping
+      displayName: 'Run Docker Container'
+
+    - script: |
+        sleep 15
+        sudo docker logs logi-ping-test
+      displayName: 'Display Docker Container Logs'
+
+- stage: GithubSync
   pool:
     name: gads-agent-pool
-    demands:
-    - agent.name -equals $(agentName)
-
-  steps:
-  - task: AzureKeyVault@2
-    inputs:
-      azureSubscription: 'Azure dla studentów(232fe18a-7562-4ae5-9507-29d2bde01130)'
-      KeyVaultName: 'credentialsforproject'
-      SecretsFilter: '*'
-      RunAsPreJob: true
-
-  - script: echo Running on agent $(agentName)
-    displayName: 'Display Agent Name'
-
-  - script: |
-      echo "Uruchamiany jako użytkownik: $(whoami)"
-    displayName: 'Check Current User'
-
-  - script: |
-      sudo docker rm -f logi-ping-test || true
-    displayName: 'Remove Existing Container'
-
-  - script: |
-      sudo docker rmi logi-ping || true
-    displayName: 'Remove Existing Image'
-
-  - script: |
-      sudo docker build -t logi-ping ./app
-    displayName: 'Docker Build'
-
-  - script: |
-      echo "Running Docker container"
-      sudo docker run -d --name logi-ping-test -e Miejsce=$(Miejsce) -e ESUsername=$(es-username) -e ESPassword=$(es-password) logi-ping
-    displayName: 'Run Docker Container'
-
-  - script: |
-      sleep 15  # Daj kontenerowi trochę czasu na uruchomienie i generowanie wyjścia
-      sudo docker logs logi-ping-test
-    displayName: 'Display Docker Container Logs'
+  jobs:
+  - job: RepoSync
+    steps:
+    - script: |
+        echo Original: $(Build.Repository.Uri)
+        NEW_REPO_URI=$(echo $(Build.Repository.Uri) | sed 's/https:\/\/.*@/https:\/\//')
+        echo Modified: $NEW_REPO_URI
+        echo "##vso[task.setvariable variable=NEW_REPO_URI]$NEW_REPO_URI"
+      displayName: 'Modify Build Repository URI (Linux)'
+      condition: eq(variables['Agent.OS'], 'Linux')
+    - powershell: |
+        $originalUri = "$(Build.Repository.Uri)"
+        Write-Host "Original: $originalUri"
+        $modifiedUri = $originalUri -replace "https://.*@", "https://"
+        Write-Host "Modified: $modifiedUri"
+        echo "##vso[task.setvariable variable=NEW_REPO_URI]$modifiedUri"
+      displayName: 'Modify Build Repository URI (Windows)'
+      condition: eq(variables['Agent.OS'], 'Windows_NT')
+    - task: mirror-git-repository-vsts-task@1
+      inputs:
+        sourceGitRepositoryUri: '$(NEW_REPO_URI)'
+        sourceGitRepositoryPersonalAccessToken: '$(azure_pat)'
+        destinationGitRepositoryUri: '$(repo_github)'
+        destinationGitRepositoryPersonalAccessToken: '$(git_pat)'
