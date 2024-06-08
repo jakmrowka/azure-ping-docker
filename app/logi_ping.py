@@ -7,7 +7,7 @@ from pathlib import Path
 import os
 print("zaczynam")
 # Parametry konfiguracyjne
-es_host = "http://87.207.10.127"
+es_host = "http://87.207.189.239"
 es_port = "9200"
 index_name = "search-pingi"
 
